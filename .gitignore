@@ -1,0 +1,8 @@
+workspace/*
+!workspace/README.md
+.env
+.DS_Store
+*.tmp
+~$*
+__pycache__/
+.claude/settings.local.json
