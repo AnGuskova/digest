@@ -109,6 +109,20 @@ def tablitsa_posle(tekst, nachalo):
     return zag, ryady
 
 
+def chitatel_bloki(chitatel):
+    """Заголовки карточек: жирные строки в «По инициативам» и прочие разделы ##."""
+    razdel = None
+    for s in chitatel.splitlines():
+        m = re.match(r"^##\s+(.*?)\s*$", s)
+        if m:
+            razdel = m.group(1)
+            if not razdel.startswith(("Главное", "По инициативам")):
+                yield razdel
+            continue
+        if razdel and razdel.startswith("По инициативам") and re.match(r"^\s*\*\*.+?\*\*", s):
+            yield s.strip()
+
+
 def proverit(put, tekst, o):
     if not ZAGOLOVOK.search(tekst):
         o.warn(
@@ -184,9 +198,23 @@ def proverit(put, tekst, o):
                 f"{put}:{zag[0][0]}",
                 f"«Главное за период»: пунктов {len(punkty)}, нужно 2-3 (AGENTS.md, п. 6.6)",
             )
+        for s in punkty:
+            if not re.match(r"^\s*[-*]\s+\*\*[^*]+\*\*", s):
+                o.warn(
+                    put,
+                    f"«Главное за период»: пункт без короткого заголовка «- **Заголовок.** Текст»: «{s.strip()[:50]}…» (templates/daydzhest.md)",
+                )
     punktov = len(
         [s for s in bez_kommentariev.splitlines() if re.match(r"^\s*[-*]\s+\S", s)]
     )
+
+    # Блоки читательской части: в шаблоне PPTX 8 карточек (templates/daydzhest.pptx).
+    blokov = len(list(chitatel_bloki(bez_kommentariev)))
+    if blokov > 8:
+        o.err(
+            put,
+            f"блоков (инициативы, «События периода», «В следующем …») {blokov}, в шаблоне 8 карточек (AGENTS.md, п. 3)",
+        )
 
     # Служебная часть: обязательные разделы и порядок.
     sl = razdely(sluzh)
@@ -282,7 +310,11 @@ def fayly(argumenty):
     for a in argumenty:
         p = Path(a)
         if p.is_dir():
-            yield from sorted(x for x in p.rglob("*.md") if x.name != "README.md")
+            yield from sorted(
+                x
+                for x in p.rglob("*.md")
+                if x.name != "README.md" and not x.name.startswith("kontakty")
+            )
         else:
             yield p
 
