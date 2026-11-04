@@ -63,7 +63,20 @@ def sistemnyy_prompt():
             prochitat(KOREN / "nastroyki/dorozhnaya-karta.md"),
         ),
     ]
+    istochniki = KOREN / "workspace/istochniki.md"
+    if not istochniki.exists():
+        istochniki = KOREN / "nastroyki/istochniki.md"
+    chasti.append((str(istochniki.relative_to(KOREN)), prochitat(istochniki)))
     return "\n\n".join(f"===== Файл {imya} =====\n{tekst}" for imya, tekst in chasti)
+
+
+def imya_materiala(f):
+    """Путь от корня репозитория: по папке workspace/inputs/<код источника>/ модель ссылается на источник."""
+    put = Path(f).resolve()
+    try:
+        return str(put.relative_to(KOREN.resolve()))
+    except ValueError:
+        return put.name
 
 
 def zapros_polzovatelya(a, fayly):
@@ -75,7 +88,7 @@ def zapros_polzovatelya(a, fayly):
         "Верни только файл дайджеста в Markdown, без пояснений до и после.\n"
     )
     materialy = "\n\n".join(
-        f"===== Материал: {Path(f).name} =====\n{prochitat(f)}" for f in fayly
+        f"===== Материал: {imya_materiala(f)} =====\n{prochitat(f)}" for f in fayly
     )
     return shapka + "\n" + materialy
 
