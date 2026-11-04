@@ -13,11 +13,13 @@ OpenRouter, YandexGPT, локальных Ollama и LM Studio и других п
     AI_AUTH_SCHEME  схема авторизации, по умолчанию Bearer
 
 Запуск:
-    python3 scripts/zapusk.py --period "III квартал 2026" [--data-sreza 05.10.2026]
-        [--adresat внутренний|внешний] [--imya 3кв-2026] файл1.md файл2.txt ...
+    python3 scripts/zapusk.py --period "сентябрь - октябрь 2026" [--data-sreza 04.11.2026]
+        [--adresat внутренний|внешний] [--proshlyy прошлый_выпуск.md] файл1.md файл2.txt ...
 
-Входные файлы: текст (.md, .txt, .csv). PDF и DOCX сначала сохраните как текст.
-Результат: черновик workspace/outputs/ГГГГ-ММ-ДД_дайджест_<имя>_черновик.md,
+Входные файлы: текст (.md, .txt, .csv). PDF, DOCX и PPTX сначала сохраните как текст.
+Прошлый выпуск (--proshlyy) нужен, чтобы не повторять пункты без нового продвижения
+(AGENTS.md, п. 4.2): черновик прошлого выпуска или текст итогового файла.
+Результат: черновик workspace/outputs/Дайджест Открытые API - <период>_черновик.md,
 проверка proverka.py и итоговый файл .pptx (sborka.py, нужна python-pptx).
 """
 
@@ -50,13 +52,23 @@ def prochitat(put):
     return Path(put).read_text(encoding="utf-8")
 
 
+def nastroyka(imya):
+    """Заполненная копия из workspace/ главнее файла из nastroyki/."""
+    lichnaya = KOREN / "workspace" / imya
+    return lichnaya if lichnaya.exists() else KOREN / "nastroyki" / imya
+
+
 def sistemnyy_prompt():
     chasti = [
         ("AGENTS.md", prochitat(KOREN / "AGENTS.md")),
         ("templates/daydzhest.md", prochitat(KOREN / "templates/daydzhest.md")),
         (
             "nastroyki/rabochie-gruppy.md",
-            prochitat(KOREN / "nastroyki/rabochie-gruppy.md"),
+            prochitat(nastroyka("rabochie-gruppy.md")),
+        ),
+        (
+            "nastroyki/spravochnik-terminov.md",
+            prochitat(KOREN / "nastroyki/spravochnik-terminov.md"),
         ),
         (
             "nastroyki/dorozhnaya-karta.md",
@@ -70,12 +82,16 @@ def zapros_polzovatelya(a, fayly):
     shapka = (
         "Подготовь дайджест Центра компетенций по Открытым API по правилам AGENTS.md и шаблону templates/daydzhest.md.\n"
         f"Период: {a.period}\nДата среза: {a.data_sreza}\nАдресат: {a.adresat}\n"
+        + (f"Прошлый выпуск: материал «{Path(a.proshlyy).name}»; сравни с ним по п. 4.2 AGENTS.md.\n"
+           if a.proshlyy else "Прошлый выпуск: В предоставленных данных информации нет.\n")
+        +
         "Источники: только материалы ниже. Других источников у тебя нет; чего нет в материалах, "
         "в дайджест не входит, а вопрос идёт в «Открытые вопросы».\n"
         "Верни только файл дайджеста в Markdown, без пояснений до и после.\n"
     )
+    vse = list(fayly) + ([a.proshlyy] if a.proshlyy else [])
     materialy = "\n\n".join(
-        f"===== Материал: {Path(f).name} =====\n{prochitat(f)}" for f in fayly
+        f"===== Материал: {Path(f).name} =====\n{prochitat(f)}" for f in vse
     )
     return shapka + "\n" + materialy
 
@@ -122,18 +138,18 @@ def vyrezat_markdown(tekst):
 def main():
     zagruzit_env()
     p = argparse.ArgumentParser(description="Дайджест через API модели")
-    p.add_argument("--period", required=True, help="например «III квартал 2026»")
+    p.add_argument("--period", required=True, help="например «сентябрь - октябрь 2026»")
     p.add_argument("--data-sreza", default=datetime.date.today().strftime("%d.%m.%Y"))
     p.add_argument("--adresat", default="внутренний", choices=["внутренний", "внешний"])
-    p.add_argument("--imya", help="период для имени файла: 3кв-2026, 1пг-2026, 2026")
+    p.add_argument("--imya", help="период для имени файла; по умолчанию из --period: «сентябрь-октябрь 2026»")
+    p.add_argument("--proshlyy", help="прошлый выпуск (текст) для сравнения, AGENTS.md, п. 4.2")
     p.add_argument("fayly", nargs="+", help="материалы за период (текстовые файлы)")
     a = p.parse_args()
 
     otvet = vyrezat_markdown(vyzov(sistemnyy_prompt(), zapros_polzovatelya(a, a.fayly)))
 
-    data = datetime.datetime.strptime(a.data_sreza, "%d.%m.%Y").strftime("%Y-%m-%d")
-    imya = a.imya or re.sub(r"\s+", "-", a.period.strip())
-    put = KOREN / "workspace" / "outputs" / f"{data}_дайджест_{imya}_черновик.md"
+    imya = a.imya or re.sub(r"\s*-\s*", "-", a.period.strip().lower())
+    put = KOREN / "workspace" / "outputs" / f"Дайджест Открытые API - {imya}_черновик.md"
     put.parent.mkdir(parents=True, exist_ok=True)
     put.write_text(otvet, encoding="utf-8")
     print(f"Сохранено: {put.relative_to(KOREN)}")
@@ -144,7 +160,7 @@ def main():
     if rez.returncode:
         print(
             "Проверка нашла нарушения: исправьте черновик, затем соберите итоговый файл:\n"
-            f"    python3 scripts/sborka.py {put.relative_to(KOREN)}"
+            f'    python3 scripts/sborka.py "{put.relative_to(KOREN)}"'
         )
         return rez.returncode
 

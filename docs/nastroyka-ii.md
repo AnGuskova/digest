@@ -8,27 +8,30 @@
 | `prompts/system-prompt.md`      | Короткая выжимка правил для поля «инструкции» в чат-интерфейсах |
 | `prompts/zapros.md`             | Текст запроса на подготовку дайджеста                           |
 | `templates/daydzhest.md`        | Шаблон черновика: текст, метки, трассировка                     |
-| `templates/daydzhest.pptx`      | Шаблон итогового файла АФТ                                      |
-| `nastroyki/kontakty.md`         | Контакты координаторов для второй страницы                      |
-| `nastroyki/rabochie-gruppy.md`  | Рабочие группы и папки с материалами                            |
-| `nastroyki/dorozhnaya-karta.md` | Инициативы дорожной карты                                       |
+| `templates/daydzhest.pptx`      | Шаблон итогового файла АФТ на 2 страницах                       |
+| `nastroyki/rabochie-gruppy.md`  | Рабочие группы, номера карточек, участники, папки               |
+| `nastroyki/spravochnik-terminov.md` | Как пишутся термины и организации                           |
+| `nastroyki/kontakty.md`         | Образец таблицы «Как подключиться»                              |
+| `nastroyki/dorozhnaya-karta.md` | Вехи дорожной карты (необязательно)                             |
 | `scripts/proverka.py`           | Формальная проверка черновика                                   |
 | `scripts/sborka.py`             | Сборка итогового файла .pptx из черновика                       |
+| `scripts/kommentarii.py`        | Комментарии рецензента из PPTX                                  |
 | `scripts/zapusk.py`             | Запуск через API любой модели с форматом OpenAI                 |
 
-Перед началом заполните `nastroyki/rabochie-gruppy.md` и `nastroyki/dorozhnaya-karta.md`.
+Перед началом проверьте `nastroyki/rabochie-gruppy.md` и `nastroyki/spravochnik-terminov.md`. Контакты для «Как подключиться» и, если нужно, состав участников и ID папок заполните в `workspace/kontakty.md` и `workspace/rabochie-gruppy.md`: репозиторий публичный, а папка `workspace/` в git не попадает.
 
 ## Важно до начала работы
 
 - Внутренние документы АФТ передаются во внешний ИИ только по правилам информационной безопасности вашей организации. Если правила запрещают внешние сервисы, используйте локальную модель (раздел 5).
 - Поле инструкций в чат-интерфейсах ограничено по длине. Поэтому в него вставляется короткий `prompts/system-prompt.md`, а полные правила (`AGENTS.md`) загружаются файлом.
-- Результат: два файла. Черновик `…_черновик.md` с метками и служебной частью и итоговый файл `….pptx` по шаблону АФТ без меток.
+- Результат: два файла. Черновик `Дайджест Открытые API - <период>_черновик.md` с метками и служебной частью и итоговый файл `Дайджест Открытые API - <период>.pptx` на 2 страницах по шаблону АФТ без меток.
+- К каждому запросу прикладывайте прошлый выпуск: без него агент не сможет убрать повторы (AGENTS.md, п. 4.2).
 - Если ИИ не умеет запускать скрипты, он выдаёт только черновик. Сохраните его в файл, затем проверьте и соберите итоговый файл сами:
 
   ```bash
   pip install python-pptx
-  python3 scripts/proverka.py workspace/outputs/<файл>_черновик.md
-  python3 scripts/sborka.py workspace/outputs/<файл>_черновик.md
+  python3 scripts/proverka.py "workspace/outputs/<файл>_черновик.md"
+  python3 scripts/sborka.py "workspace/outputs/<файл>_черновик.md"
   ```
 
 - Если ИИ в чате умеет выполнять код (например, анализ данных в ChatGPT или Claude), приложите к чату `templates/daydzhest.pptx` и `scripts/sborka.py` и попросите собрать итоговый файл скриптом.
@@ -39,17 +42,17 @@
 
 1. Создайте проект или ассистента, например «Дайджест ЦК ОПИ».
 2. В поле инструкций вставьте текст `prompts/system-prompt.md`.
-3. Загрузите в файлы проекта: `AGENTS.md`, `templates/daydzhest.md`, `nastroyki/rabochie-gruppy.md`, `nastroyki/dorozhnaya-karta.md`. Если ИИ умеет выполнять код, добавьте `templates/daydzhest.pptx`, `scripts/sborka.py`, `scripts/proverka.py` и заполненный файл контактов.
+3. Загрузите в файлы проекта: `AGENTS.md`, `templates/daydzhest.md`, `nastroyki/rabochie-gruppy.md` (или заполненную копию из `workspace/`), `nastroyki/spravochnik-terminov.md`. Если ИИ умеет выполнять код, добавьте `templates/daydzhest.pptx`, `scripts/sborka.py`, `scripts/proverka.py`, `scripts/kommentarii.py` и заполненный файл контактов.
 4. Если сервис подключён к Google Drive, разрешите доступ только на чтение к папкам из `nastroyki/rabochie-gruppy.md`. Если не подключён, прикладывайте файлы к запросу.
-5. Для каждого дайджеста откройте новый чат в проекте, вставьте запрос из `prompts/zapros.md` и приложите материалы за период.
-6. Сохраните черновик в файл `ГГГГ-ММ-ДД_дайджест_<период>_черновик.md`, проверьте его и соберите итоговый файл (см. «Важно до начала работы»).
+5. Для каждого дайджеста откройте новый чат в проекте, вставьте запрос из `prompts/zapros.md` и приложите материалы за период и прошлый выпуск.
+6. Сохраните черновик в файл `Дайджест Открытые API - <период>_черновик.md`, проверьте его и соберите итоговый файл (см. «Важно до начала работы»).
 
 ## 2. Чат без сохранённых инструкций
 
 Подходит для DeepSeek, GigaChat, YandexGPT и любых других чатов.
 
 1. Откройте новый чат.
-2. Приложите файлы: `AGENTS.md`, `templates/daydzhest.md`, `nastroyki/rabochie-gruppy.md`, `nastroyki/dorozhnaya-karta.md` и материалы за период.
+2. Приложите файлы: `AGENTS.md`, `templates/daydzhest.md`, `nastroyki/rabochie-gruppy.md`, `nastroyki/spravochnik-terminov.md`, материалы за период и прошлый выпуск.
 3. Первым сообщением вставьте текст `prompts/system-prompt.md`, затем запрос из `prompts/zapros.md`.
 4. Если чат не принимает файлы, вставьте их текст в сообщение. Порядок тот же: правила, шаблон, настройки, материалы.
 5. Сохраните черновик в файл, проверьте его и соберите итоговый файл скриптами.
@@ -74,7 +77,8 @@
 3. Запустите:
 
    ```bash
-   python3 scripts/zapusk.py --period "III квартал 2026" --data-sreza 05.10.2026 --imya 3кв-2026 workspace/inputs/*.md
+   python3 scripts/zapusk.py --period "сентябрь - октябрь 2026" --data-sreza 04.11.2026 \
+       --proshlyy "workspace/inputs/прошлый выпуск.md" workspace/inputs/*.md
    ```
 
 4. Скрипт сохранит черновик в `workspace/outputs/`, проверит его и, если установлена `python-pptx`, соберёт итоговый файл .pptx.
