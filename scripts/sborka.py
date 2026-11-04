@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Сборка итогового дайджеста в PPTX по шаблону templates/daydzhest.pptx.
+"""Сборка итогового дайджеста PPTX по шаблону templates/daydzhest.pptx.
 
-На входе черновик: файл Markdown с читательской и служебной частью
-(AGENTS.md, п. 3). На выходе итоговый файл: только читательская часть,
-без меток, ссылок и служебной части, оформленная по шаблону АФТ.
+На входе черновик: Markdown с читательской и служебной частью (AGENTS.md, п. 3).
+На выходе итоговый файл на 2 страницах: только читательская часть, без меток,
+ссылок и служебной части, оформленная по шаблону АФТ.
 
 Что куда попадает:
-    «## Главное за период»          -> «Ключевые итоги» (2-3 пункта
-                                       вида «- **Заголовок.** Текст»)
-    «**Инициатива**» и её пункты    -> карточки «Основные направления»
-    «## События периода»,
-    «## В следующем …»              -> отдельные карточки с этим заголовком
-    nastroyki/kontakty.md           -> таблица «Контакты» на 2-й странице
-    (сначала ищется workspace/kontakty.md)
+    «# Открытые API: дайджест за <период>»  -> плашка периода, строка над карточками стр. 2
+    «## Ключевые итоги», 1-3 пункта
+        «- **Заголовок.** Текст»            -> блок «Ключевые итоги» (стр. 1)
+    «## Основные направления»
+        «### N. Название»                   -> карточка N (1-4 на стр. 1, 5-8 на стр. 2)
+        «- пункт» (1-3 пункта)              -> пункты карточки
+        «Участники: …»                      -> строка «Участники:» внизу карточки
+    «[^1]» в тексте и «[^1]: …»             -> надстрочный номер и сноска внизу стр. 1
+    «В предоставленных данных информации нет» -> выделяется жёлтым
+    workspace/kontakty.md или nastroyki/kontakty.md -> таблица «Как подключиться» (стр. 2)
 
-Высота блоков считается по длине текста. Если текст не помещается
-на первую страницу, скрипт уменьшает шрифт карточек до 9 pt, а если
-и это не помогает, завершается с ошибкой: дайджест сокращается отбором
-(AGENTS.md, п. 6, шаги 6 и 8).
+Номер карточки N совпадает с номером места в шаблоне: у каждого места свой
+значок (nastroyki/rabochie-gruppy.md, колонка «№»). Отсутствующая карточка
+убирается, остальные на той же странице сдвигаются.
+
+Высота блоков считается по длине текста. Если текст не помещается, скрипт
+уменьшает шрифт карточек с 9,5 до 9 pt, а если и это не помогает, завершается
+с ошибкой: дайджест сокращается отбором (AGENTS.md, п. 7, шаг 7).
 
 Запуск:
-    python3 scripts/sborka.py workspace/outputs/2026-10-05_дайджест_3кв-2026_черновик.md
+    python3 scripts/sborka.py "workspace/outputs/Дайджест Открытые API - сентябрь-октябрь 2026_черновик.md"
         [--vyhod файл.pptx] [--shablon templates/daydzhest.pptx]
         [--kontakty файл.md] [--bez-proverki]
 
@@ -44,10 +50,11 @@ except ImportError:  # pragma: no cover
 
 KOREN = Path(__file__).resolve().parent.parent
 SHABLON = KOREN / "templates" / "daydzhest.pptx"
-EMU_PT = 12700
-MAKS_KARTOCHEK = 8
+MARKER_NET = "В предоставленных данных информации нет"
+E = 914400  # EMU в дюйме
+PT = 12700  # EMU в пункте
 
-# ---------------------------------------------------------------- разбор Markdown
+# ---------------------------------------------------------------- разбор черновика
 
 
 def bez_razmetki(s):
@@ -57,18 +64,16 @@ def bez_razmetki(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
-def punkt(s):
-    m = re.match(r"^\s*[-*]\s+(.*\S)\s*$", s)
-    return m.group(1) if m else None
+def chitatelskaya_chast(tekst):
+    m = re.search(r"^---\s*$", tekst, re.M)
+    if not m:
+        sys.exit("Нет разделителя «---»: это не черновик дайджеста (AGENTS.md, п. 3)")
+    return re.sub(r"<!--.*?-->", "", tekst[: m.start()], flags=re.S), tekst[m.end():]
 
 
 def razobrat(tekst):
     """Читательская часть черновика -> словарь для шаблона."""
-    m = re.search(r"^---\s*$", tekst, re.M)
-    if not m:
-        sys.exit("Нет разделителя «---»: это не черновик дайджеста (AGENTS.md, п. 3)")
-    chitatel = re.sub(r"<!--.*?-->", "", tekst[: m.start()], flags=re.S)
-    sluzh = tekst[m.end() :]
+    chitatel, sluzh = chitatelskaya_chast(tekst)
 
     m = re.search(r"^#\s+Открытые API: дайджест за\s+(.+?)\s*$", chitatel, re.M)
     if not m:
@@ -78,57 +83,74 @@ def razobrat(tekst):
     data_sreza = m.group(1) if m else None
     ne_zavershen = bool(re.search(r"Период завершён:\s*нет", sluzh, re.I))
 
+    snoski = {}
+    for m in re.finditer(r"^\[\^(\w+)\]:\s*(.+?)\s*$", chitatel, re.M):
+        snoski[m.group(1)] = bez_razmetki(m.group(2))
+
     itogi, kartochki = [], []
-    razdel, tekushchaya = None, None
+    razdel, tek = None, None
     for s in chitatel.splitlines():
-        z = re.match(r"^##\s+(.*?)\s*$", s)
-        if z:
-            razdel = bez_razmetki(z.group(1))
-            tekushchaya = None
-            if not razdel.startswith(("Главное", "По инициативам")):
-                tekushchaya = {"zagolovok": razdel, "punkty": []}
-                kartochki.append(tekushchaya)
+        if re.match(r"^\[\^\w+\]:", s):
+            continue
+        z2 = re.match(r"^##\s+(.*?)\s*$", s)
+        if z2:
+            razdel = bez_razmetki(z2.group(1)).lower()
+            tek = None
             continue
         if razdel is None:
             continue
-        p = punkt(s)
-        if razdel.startswith("Главное"):
+        p = re.match(r"^\s*[-*]\s+(.*\S)\s*$", s)
+        if razdel.startswith("ключевые итоги"):
             if p:
-                mz = re.match(r"^\*\*(.+?)\*\*[\s.:—-]*(.*)$", p)
+                mz = re.match(r"^\*\*(.+?)\*\*\s*(.*)$", p.group(1))
                 if mz:
-                    itogi.append(
-                        (bez_razmetki(mz.group(1)).rstrip(".:"), bez_razmetki(mz.group(2)))
-                    )
+                    zag = bez_razmetki(mz.group(1))
+                    zag = zag[:-1] if zag.endswith(".") else zag
+                    itogi.append((zag, bez_razmetki(mz.group(2))))
                 else:
-                    itogi.append(("", bez_razmetki(p)))
+                    itogi.append(("", bez_razmetki(p.group(1))))
             continue
-        if razdel.startswith("По инициативам") and not p:
-            mb = re.match(r"^\s*\*\*(.+?)\*\*(.*)$", s)
-            if mb:
-                tekushchaya = {
-                    "zagolovok": bez_razmetki(mb.group(1) + mb.group(2)),
-                    "punkty": [],
-                }
-                kartochki.append(tekushchaya)
-            continue
-        if p and tekushchaya is not None:
-            tekushchaya["punkty"].append(bez_razmetki(p))
+        if razdel.startswith("основные направления"):
+            z3 = re.match(r"^###\s+(\d+)\.\s*(.+?)\s*$", s)
+            if z3:
+                tek = {"n": int(z3.group(1)), "zagolovok": bez_razmetki(z3.group(2)),
+                       "punkty": [], "uchastniki": ""}
+                kartochki.append(tek)
+                continue
+            if tek is None:
+                continue
+            mu = re.match(r"^\s*\**Участники:?\**:?\s*(.*\S)\s*$", s)
+            if mu:
+                tek["uchastniki"] = bez_razmetki(mu.group(1))
+            elif p:
+                tek["punkty"].append(bez_razmetki(p.group(1)))
 
-    kartochki = [k for k in kartochki if k["punkty"]]
-    if not itogi:
-        sys.exit("В «Главное за период» нет пунктов")
-    if len(itogi) > 3:
-        sys.exit(f"В «Главное за период» {len(itogi)} пунктов, в шаблоне места для 3")
-    if len(kartochki) > MAKS_KARTOCHEK:
-        sys.exit(
-            f"Блоков {len(kartochki)}, в шаблоне места для {MAKS_KARTOCHEK} карточек. "
-            "Сократите отбором (AGENTS.md, п. 6, шаг 6)."
-        )
+    oshibki = []
+    if not 1 <= len(itogi) <= 3:
+        oshibki.append(f"в «Ключевые итоги» {len(itogi)} пунктов, в шаблоне места для 1-3")
+    nomera = [k["n"] for k in kartochki]
+    if len(set(nomera)) != len(nomera):
+        oshibki.append(f"номера карточек повторяются: {nomera}")
+    for k in kartochki:
+        if not 1 <= k["n"] <= 8:
+            oshibki.append(f"карточка «{k['zagolovok']}»: номер {k['n']}, в шаблоне места 1-8")
+        if not 1 <= len(k["punkty"]) <= 3:
+            oshibki.append(f"карточка {k['n']} «{k['zagolovok']}»: пунктов {len(k['punkty'])}, нужно 1-3")
+    if not kartochki:
+        oshibki.append("в «Основные направления» нет карточек «### N. Название»")
+    ssylki = set(re.findall(r"\[\^(\w+)\](?!:)", chitatel))
+    for s_ in ssylki - set(snoski):
+        oshibki.append(f"ссылка [^{s_}] без текста сноски «[^{s_}]: …»")
+    if len(snoski) > 1:
+        oshibki.append("в шаблоне место для одной сноски")
+    if oshibki:
+        sys.exit("Черновик не подходит для шаблона:\n- " + "\n- ".join(oshibki))
     return {
         "period": period,
         "data_sreza": data_sreza if ne_zavershen else None,
         "itogi": itogi,
-        "kartochki": kartochki,
+        "kartochki": sorted(kartochki, key=lambda k: k["n"]),
+        "snoski": snoski,
     }
 
 
@@ -155,7 +177,7 @@ def kontakty(put):
 
 
 class Izmeritel:
-    """Ширина строки в пунктах. Шрифт с метрикой Arial, если найден."""
+    """Ширина строки в пунктах по метрике Arial (или Liberation Sans)."""
 
     KANDIDATY = {
         False: [
@@ -165,7 +187,7 @@ class Izmeritel:
             "/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
         ],
         True: [
             "C:/Windows/Fonts/arialbd.ttf",
@@ -174,7 +196,7 @@ class Izmeritel:
             "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
         ],
     }
 
@@ -197,11 +219,11 @@ class Izmeritel:
             return len(s) * pt * (0.6 if zhirnyy else 0.56)
         return f.getlength(s) * pt / 100
 
-    def strok(self, tekst, pt, shirina_emu, zhirnyy=False):
-        """Число строк при переносе по словам, с запасом 4 % на разницу программ."""
+    def strok(self, tekst, pt, shirina_dyuym, zhirnyy=False, zapas=0.96):
+        """Число строк при переносе по словам, с запасом на разницу программ."""
         if not tekst:
             return 0
-        predel = shirina_emu / EMU_PT * 0.96
+        predel = shirina_dyuym * 72 * zapas
         n, tek = 1, ""
         for slovo in tekst.split():
             proba = f"{tek} {slovo}".strip()
@@ -213,8 +235,9 @@ class Izmeritel:
         return n
 
 
-def vysota(strok, pt, interval=1.0, posle_pt=0.0):
-    return int(strok * pt * 1.2 * interval * EMU_PT + posle_pt * EMU_PT)
+def vys(strok, pt, interval=1.0):
+    """Высота текста в дюймах."""
+    return strok * pt * 1.2 * interval / 72
 
 
 # ---------------------------------------------------------------- работа с XML
@@ -224,65 +247,116 @@ def figury(slayd):
     return {sh.name: sh for sh in slayd.shapes}
 
 
-def polozhit(el, x=None, y=None, w=None, h=None):
-    xfrm = el.find(".//" + qn("a:xfrm"))
-    if xfrm is None:  # таблица: p:xfrm
-        xfrm = el.find(qn("p:xfrm"))
-    off, ext = xfrm.find(qn("a:off")), xfrm.find(qn("a:ext"))
+def postavit(sh, x=None, y=None, w=None, h=None):
+    """Положение и размер в дюймах."""
     if x is not None:
-        off.set("x", str(int(x)))
+        sh.left = int(x * E)
     if y is not None:
-        off.set("y", str(int(y)))
+        sh.top = int(y * E)
     if w is not None:
-        ext.set("cx", str(int(w)))
+        sh.width = int(w * E)
     if h is not None:
-        ext.set("cy", str(int(h)))
+        sh.height = int(h * E)
 
 
-def telo_teksta(el):
-    """txBody фигуры (p:txBody) или ячейки таблицы (a:txBody)."""
+def udalit(sh):
+    sh._element.getparent().remove(sh._element)
+
+
+def telo(el):
     t = el.find(".//" + qn("p:txBody"))
     return t if t is not None else el.find(".//" + qn("a:txBody"))
 
 
-def tekst_v_figuru(el, tekst, razmer_pt=None):
-    """Текст в первый абзац первого прогона; остальные абзацы удаляются."""
-    txBody = telo_teksta(el)
-    abzatsy = txBody.findall(qn("a:p"))
-    for a in abzatsy[1:]:
-        txBody.remove(a)
-    progony = abzatsy[0].findall(qn("a:r"))
-    for r in progony[1:]:
-        abzatsy[0].remove(r)
-    progony[0].find(qn("a:t")).text = tekst
-    if razmer_pt:
-        progony[0].find(qn("a:rPr")).set("sz", str(int(razmer_pt * 100)))
+def segmenty(tekst):
+    """Текст -> [(кусок, вид)]: вид '' обычный, 'sup' номер сноски, 'hl' пометка."""
+    rez = []
+    for chast in re.split(r"(\[\^\w+\]|" + re.escape(MARKER_NET) + ")", tekst):
+        if not chast:
+            continue
+        m = re.fullmatch(r"\[\^(\w+)\]", chast)
+        if m:
+            rez.append((m.group(1), "sup"))
+        elif chast == MARKER_NET:
+            rez.append((chast, "hl"))
+        else:
+            rez.append((chast, ""))
+    return rez
 
 
-def punkty_v_figuru(el, punkty, razmer_pt):
-    txBody = telo_teksta(el)
-    abzatsy = txBody.findall(qn("a:p"))
-    obrazets = copy.deepcopy(abzatsy[0])
-    for a in abzatsy:
-        txBody.remove(a)
-    for p in punkty:
-        a = copy.deepcopy(obrazets)
-        r = a.find(qn("a:r"))
-        r.find(qn("a:t")).text = p
-        r.find(qn("a:rPr")).set("sz", str(int(razmer_pt * 100)))
-        txBody.append(a)
+def progon(obrazets_rPr, tekst, vid="", razmer=None):
+    r = copy.deepcopy(obrazets_rPr.getparent())
+    for lishnee in r.findall(qn("a:t")):
+        r.remove(lishnee)
+    rPr = r.find(qn("a:rPr"))
+    for a in ("err", "dirty", "baseline"):
+        rPr.attrib.pop(a, None)
+    if razmer:
+        rPr.set("sz", str(int(razmer * 100)))
+    if vid == "sup":
+        rPr.set("baseline", "30000")
+    for h in rPr.findall(qn("a:highlight")):
+        rPr.remove(h)
+    if vid == "hl":
+        h = rPr.makeelement(qn("a:highlight"), {})
+        c = h.makeelement(qn("a:srgbClr"), {"val": "FFFF00"})
+        h.append(c)
+        fill = rPr.find(qn("a:solidFill"))
+        if fill is not None:
+            fill.addnext(h)
+        else:
+            rPr.insert(0, h)
+    t = r.makeelement(qn("a:t"), {})
+    t.text = tekst
+    r.append(t)
+    return r
 
 
-class Nomera:
-    def __init__(self, slayd):
-        self.n = max(int(sh.shape_id) for sh in slayd.shapes) + 1
+def zapolnit_abzats(p, tekst, razmer=None, obrazets_rPr=None):
+    """Абзац p: все прогоны заменяются текстом с учётом сносок и пометок."""
+    rs = p.findall(qn("a:r"))
+    rPr = obrazets_rPr if obrazets_rPr is not None else rs[0].find(qn("a:rPr"))
+    rPr = copy.deepcopy(rPr)
+    hold = p.makeelement(qn("a:r"), {})
+    hold.append(rPr)
+    for r in rs:
+        p.remove(r)
+    end = p.find(qn("a:endParaRPr"))
+    for kusok, vid in segmenty(tekst):
+        r = progon(rPr, kusok, vid, razmer)
+        if end is not None:
+            end.addprevious(r)
+        else:
+            p.append(r)
 
-    def __call__(self, el, imya):
-        c = el.find(".//" + qn("p:cNvPr"))
-        c.set("id", str(self.n))
-        c.set("name", imya)
-        self.n += 1
-        return el
+
+def tekst_v_figuru(sh, tekst, razmer=None):
+    tb = telo(sh._element)
+    ps = tb.findall(qn("a:p"))
+    for p in ps[1:]:
+        tb.remove(p)
+    zapolnit_abzats(ps[0], tekst, razmer)
+
+
+def punkty_v_figuru(el, punkty, razmer=None):
+    tb = telo(el)
+    ps = tb.findall(qn("a:p"))
+    obrazets = copy.deepcopy(ps[0])
+    for p in ps:
+        tb.remove(p)
+    for t in punkty:
+        p = copy.deepcopy(obrazets)
+        zapolnit_abzats(p, t, razmer)
+        tb.append(p)
+
+
+def uchastniki_v_figuru(sh, spisok):
+    p = telo(sh._element).find(qn("a:p"))
+    rs = p.findall(qn("a:r"))
+    rs[0].find(qn("a:t")).text = "Участники: "
+    for r in rs[2:]:
+        p.remove(r)
+    rs[1].find(qn("a:t")).text = spisok
 
 
 def zamenit_period(slayd, period):
@@ -292,192 +366,246 @@ def zamenit_period(slayd, period):
         for a in sh.text_frame.paragraphs:
             for r in a.runs:
                 if "ПЕРИОД" in r.text:
-                    r.text = r.text.replace("ПЕРИОД", period)
+                    r.text = r.text.replace("ПЕРИОД", period.upper())
 
 
-# ---------------------------------------------------------------- страница 1
+# ---------------------------------------------------------------- геометрия шаблона (дюймы)
 
-# Координаты шаблона, EMU.
-NIZ_STRANITSY = 10124885 - 91440  # верх подвала минус зазор
-SHIRINA_TEKSTA_ITOGA = 5895466
-SHIRINA_KARTOCHKI = 3240341
-SHAG_KOLONKI = 3404725  # 3862133 - 457200
-ZAZOR_RYADOV = 164592
+SHIRINA_ITOGA = 6.45  # summary-title/text
+KARTOCHKA_W = 3.54
+KOLONKI_X = (0.50, 4.22)
+TEKST_W = 3.22 - 0.14  # wg-text минус отступ маркера
+ZAG_W = 2.38  # wg-title
+ZAZOR_RYADOV = 0.10
+PODVAL_1 = 11.12  # низ места на стр. 1 без сноски
+SNOSKA_Y = 11.18
+PODVAL_2 = 11.10  # низ места на стр. 2
+MAKS_DOBAVKA = 0.6  # на сколько можно растянуть ряд карточек, чтобы заполнить страницу
 
 
-def stranitsa_1(slayd, d, izm, kegl_kartochek, plotno=False):
-    zazor_ryadov = 91440 if plotno else ZAZOR_RYADOV
-    otstup_tela = 54864 if plotno else 91440
-    niz_kartochki = 91440 if plotno else 137160
+class Mesto:
+    """Нужная высота карточки (дюймы) и её части."""
+
+    def __init__(self, k, izm, kegl):
+        stroki_zag = izm.strok(k["zagolovok"], 11, ZAG_W, True)
+        self.h_zag = vys(stroki_zag, 11)
+        self.h_tekst = sum(vys(izm.strok(re.sub(r"\[\^\w+\]", "1", p), kegl, TEKST_W), kegl) for p in k["punkty"])
+        self.h_uch = vys(max(1, izm.strok("Участники: " + k["uchastniki"], 8, 3.22)), 8) if k["uchastniki"] else 0
+        self.nuzhno = 0.60 + self.h_tekst + 0.12 + self.h_uch + 0.08
+        self.stroki_zag = stroki_zag
+
+
+def kartochka_na_mesto(f, k, mesto, x, y, h, kegl):
+    n = k["n"]
+    postavit(f[f"wg-card-{n}"], x=x, y=y, h=h)
+    postavit(f[f"wg-badge-{n}"], x=x + 0.16, y=y + 0.16)
+    postavit(f[f"wg-icon-{n}"], x=x + 3.09, y=y + 0.18)
+    zag = f[f"wg-title-{n}"]
+    tekst_v_figuru(zag, k["zagolovok"])
+    postavit(zag, x=x + 0.61, y=y + 0.33 - mesto.h_zag / 2, h=mesto.h_zag)
+    tekst = f[f"wg-text-{n}"]
+    punkty_v_figuru(tekst._element, k["punkty"], kegl)
+    postavit(tekst, x=x + 0.16, y=y + 0.60, h=mesto.h_tekst + 0.04)
+    uch = f[f"wg-members-{n}"]
+    if k["uchastniki"]:
+        uchastniki_v_figuru(uch, k["uchastniki"])
+        postavit(uch, x=x + 0.16, y=y + h - 0.08 - mesto.h_uch, h=mesto.h_uch)
+    else:
+        udalit(uch)
+
+
+def ubrat_kartochku(f, n):
+    for chast in ("card", "badge", "icon", "title", "text", "members"):
+        imya = f"wg-{chast}-{n}"
+        if imya in f:
+            udalit(f[imya])
+
+
+def rasstavit_kartochki(f, spisok, verh, niz, izm, kegl):
+    """Карточки двумя колонками от verh; свободное место делится между рядами
+    (не больше MAKS_DOBAVKA на ряд). Возвращает (нехватка места, низ карточек) в дюймах."""
+    mesta = [Mesto(k, izm, kegl) for k in spisok]
+    ryady = [list(range(i, min(i + 2, len(spisok)))) for i in range(0, len(spisok), 2)]
+    vysoty = [max(mesta[i].nuzhno for i in r) for r in ryady]
+    est = niz - verh - ZAZOR_RYADOV * (len(ryady) - 1)
+    lishnee = est - sum(vysoty)
+    if lishnee < 0:
+        return -lishnee, verh
+    dobavka = min(MAKS_DOBAVKA, lishnee / len(ryady)) if ryady else 0
+    y = verh
+    for r, h in zip(ryady, vysoty):
+        h += dobavka
+        for j, i in enumerate(r):
+            kartochka_na_mesto(f, spisok[i], mesta[i], KOLONKI_X[j], y, h, kegl)
+        y += h + ZAZOR_RYADOV
+    return 0.0, y - ZAZOR_RYADOV
+
+
+def stranitsa_1(slayd, d, izm, kegl):
     f = figury(slayd)
-    nomer = Nomera(slayd)
-    der = slayd.shapes._spTree
-    obr = {k: copy.deepcopy(f[k]._element) for k in (
-        "summary-dot-1", "summary-title-1", "summary-text-1", "summary-divider-1",
-        "wg-card-1", "wg-badge-1", "wg-title-1", "wg-body-1",
-    )}
-    for imya, sh in f.items():
-        if re.match(r"^(summary-(dot|title|text|divider)|wg-(card|badge|title|body))-\d+$", imya):
-            der.remove(sh._element)
-
     # Ключевые итоги.
-    panel = f["summary-panel"]._element
-    verh_paneli = 1737360
-    y = verh_paneli + 164592
-    kegl_itoga = 11
-    for i, (zag, tekst) in enumerate(d["itogi"], 1):
+    y = 1.70 + 0.14
+    for i in range(1, 4):
+        if i > len(d["itogi"]):
+            for imya in (f"summary-title-{i}", f"summary-text-{i}", f"summary-icon-{i}", f"summary-divider-{i - 1}"):
+                if imya in f:
+                    udalit(f[imya])
+            continue
+        zag, tekst = d["itogi"][i - 1]
         if i > 1:
-            el = nomer(copy.deepcopy(obr["summary-divider-1"]), f"summary-divider-{i}")
-            polozhit(el, y=y)
-            der.append(el)
-            y += 73152
-        verh = y
-        if zag:
-            h = max(237744, vysota(izm.strok(zag, 12, SHIRINA_TEKSTA_ITOGA, True), 12))
-            el = nomer(copy.deepcopy(obr["summary-title-1"]), f"summary-title-{i}")
-            tekst_v_figuru(el, zag)
-            polozhit(el, y=y, h=h)
-            der.append(el)
-            y += h + 18288
-        if tekst:
-            h = vysota(izm.strok(tekst, kegl_itoga, SHIRINA_TEKSTA_ITOGA), kegl_itoga, 1.05)
-            el = nomer(copy.deepcopy(obr["summary-text-1"]), f"summary-text-{i}")
-            tekst_v_figuru(el, tekst, kegl_itoga)
-            polozhit(el, y=y, h=h)
-            der.append(el)
-            y += h
-        el = nomer(copy.deepcopy(obr["summary-dot-1"]), f"summary-dot-{i}")
-        polozhit(el, y=verh + 68580)
-        der.append(el)
-        y += 109728
-    niz_paneli = y + 54864
-    polozhit(panel, h=niz_paneli - verh_paneli)
+            postavit(f[f"summary-divider-{i - 1}"], y=y + 0.08)
+            y += 0.18
+        h_zag = vys(max(1, izm.strok(zag, 12, SHIRINA_ITOGA, True, 0.99)), 12)
+        tekst_v_figuru(f[f"summary-title-{i}"], zag or " ")
+        postavit(f[f"summary-title-{i}"], y=y, h=h_zag)
+        postavit(f[f"summary-icon-{i}"], y=y + min(h_zag, 0.2) / 2 - 0.125)
+        y += h_zag + 0.05
+        h_t = vys(izm.strok(re.sub(r"\[\^\w+\]", "1", tekst), 11, SHIRINA_ITOGA), 11, 1.05)
+        tekst_v_figuru(f[f"summary-text-{i}"], tekst)
+        postavit(f[f"summary-text-{i}"], y=y, h=h_t)
+        y += h_t
+    niz_paneli = y + 0.09
+    postavit(f["summary-panel"], h=niz_paneli - 1.70)
+    postavit(f["directions-heading"], y=niz_paneli + 0.11)
+    postavit(f["directions-marker"], y=niz_paneli + 0.21)
+    verh = niz_paneli + 0.11 + 0.48
 
-    # Заголовок «Основные направления».
-    zag_napr = niz_paneli + 347472
-    polozhit(f["directions-heading"]._element, y=zag_napr)
-    polozhit(f["directions-marker"]._element, y=zag_napr + 91440)
+    # Сноска.
+    if d["snoski"]:
+        (klyuch, tekst), = d["snoski"].items()
+        sn = f["summary-footnote-1"]
+        p = telo(sn._element).find(qn("a:p"))
+        rs = p.findall(qn("a:r"))
+        rs[0].find(qn("a:t")).text = klyuch
+        rs[1].find(qn("a:t")).text = " " + tekst
+        h_sn = vys(izm.strok(klyuch + " " + tekst, 8, 6.2), 8)
+        postavit(sn, y=SNOSKA_Y, w=6.2, h=h_sn)
+        niz = SNOSKA_Y - 0.10
+    else:
+        udalit(f["summary-footnote-1"])
+        niz = PODVAL_1
 
-    # Карточки.
-    vysoty = []
-    for k in d["kartochki"]:
-        h_zag = max(310896, vysota(izm.strok(k["zagolovok"], 12, 2490533, True), 12))
-        h_tela = sum(
-            vysota(izm.strok(p, kegl_kartochek, 2490533 - 146304), kegl_kartochek, 1.0, 2)
-            for p in k["punkty"]
-        )
-        vysoty.append((h_zag, h_tela, 146304 + h_zag + otstup_tela + h_tela + niz_kartochki))
-    y = zag_napr + 438913
-    for i in range(0, len(vysoty), 2):
-        ryad = vysoty[i : i + 2]
-        h_ryada = max(v[2] for v in ryad)
-        for j, (h_zag, h_tela, _) in enumerate(ryad):
-            n = i + j + 1
-            k = d["kartochki"][n - 1]
-            x = 457200 + j * SHAG_KOLONKI
-            el = nomer(copy.deepcopy(obr["wg-card-1"]), f"wg-card-{n}")
-            polozhit(el, x=x, y=y, h=h_ryada)
-            der.append(el)
-            el = nomer(copy.deepcopy(obr["wg-badge-1"]), f"wg-badge-{n}")
-            tekst_v_figuru(el, str(n))
-            polozhit(el, x=x + 164592, y=y + 146304)
-            der.append(el)
-            el = nomer(copy.deepcopy(obr["wg-title-1"]), f"wg-title-{n}")
-            tekst_v_figuru(el, k["zagolovok"])
-            polozhit(el, x=x + 585216, y=y + 146304, h=h_zag)
-            der.append(el)
-            el = nomer(copy.deepcopy(obr["wg-body-1"]), f"wg-body-{n}")
-            punkty_v_figuru(el, k["punkty"], kegl_kartochek)
-            polozhit(el, x=x + 585216, y=y + 146304 + h_zag + otstup_tela, h=h_tela)
-            der.append(el)
-        y += h_ryada + zazor_ryadov
-    return y - zazor_ryadov  # низ последнего ряда
+    spisok = [k for k in d["kartochki"] if k["n"] <= 4]
+    for n in set(range(1, 5)) - {k["n"] for k in spisok}:
+        ubrat_kartochku(f, n)
+    return rasstavit_kartochki(f, spisok, verh, niz, izm, kegl)[0]
 
 
-def period_v_plashku(slayd, d):
-    if not d["data_sreza"]:
-        return
-    txBody = telo_teksta(figury(slayd)["period"]._element)
-    a = copy.deepcopy(txBody.find(qn("a:p")))
-    r = a.find(qn("a:r"))
-    r.find(qn("a:t")).text = f"данные на {d['data_sreza']}"
-    r.find(qn("a:rPr")).set("sz", "850")
-    r.find(qn("a:rPr")).set("b", "0")
-    txBody.append(a)
-
-
-# ---------------------------------------------------------------- страница 2
-
-
-def stranitsa_2(slayd, spisok, izm):
-    f = figury(slayd)
-    if not spisok:
-        der = slayd.shapes._spTree
-        for imya in ("contacts-marker", "contacts-heading", "contacts-table"):
-            der.remove(f[imya]._element)
-        return False
+def tablitsa_kontaktov(f, spisok, izm):
+    """Заполняет таблицу, возвращает её высоту в дюймах."""
     tbl = f["contacts-table"]._element.find(".//" + qn("a:tbl"))
     ryady = tbl.findall(qn("a:tr"))
     obraztsy = [copy.deepcopy(ryady[1]), copy.deepcopy(ryady[2])]
     for r in ryady[1:]:
         tbl.remove(r)
-    obshchaya = int(ryady[0].get("h"))
+    obshchaya = int(ryady[0].get("h")) / E
     for i, (rg, fio, pochta) in enumerate(spisok):
         tr = copy.deepcopy(obraztsy[i % 2])
         yach = tr.findall(qn("a:tc"))
-        punkty_v_figuru(yach[0], rg, 11)
+        punkty_v_figuru(yach[0], rg)
         tb = yach[1].find(qn("a:txBody"))
         a_fio, a_pochta = tb.findall(qn("a:p"))[:2]
-        a_fio.find(".//" + qn("a:t")).text = fio
+        zapolnit_abzats(a_fio, fio)
         if pochta:
-            a_pochta.find(".//" + qn("a:t")).text = pochta
+            zapolnit_abzats(a_pochta, pochta)
         else:
             tb.remove(a_pochta)
-        strok = sum(izm.strok(x, 11, 3654901 - 365760 - 146304) for x in rg)
-        h = max(548640, vysota(max(strok, 2), 11) + 182880 + 45720)
-        tr.set("h", str(h))
+        strok = sum(izm.strok(x, 10, 5.12 - 0.28 - 0.16) for x in rg)
+        h = max(0.45, vys(max(strok, 2), 10) + 0.14)
+        tr.set("h", str(int(h * E)))
         tbl.append(tr)
         obshchaya += h
-    polozhit(f["contacts-table"]._element, h=obshchaya)
-    return True
+    postavit(f["contacts-table"], h=obshchaya)
+    return obshchaya
+
+
+def stranitsa_2(slayd, d, kontakty_spisok, izm, kegl):
+    f = figury(slayd)
+    spisok = [k for k in d["kartochki"] if k["n"] >= 5]
+    for n in set(range(5, 9)) - {k["n"] for k in spisok}:
+        ubrat_kartochku(f, n)
+
+    # Высота блоков под карточками: «Полезная информация» и «Как подключиться».
+    info = [n for n in f if n.startswith("resource-")] + ["info-heading", "info-marker"]
+    verh_info = f["info-heading"].top / E
+    sdvig_info = {n: f[n].top / E - verh_info for n in info}
+    h_info = 0.44 + 1.44 + 0.18
+    if kontakty_spisok:
+        h_tabl = tablitsa_kontaktov(f, kontakty_spisok, izm)
+        h_kont = 0.44 + h_tabl
+    else:
+        for imya in ("contacts-marker", "contacts-heading", "contacts-table"):
+            udalit(f[imya])
+        h_kont = 0
+
+    verh = 0.82
+    mesta = [Mesto(k, izm, kegl) for k in spisok]
+    ryady = [list(range(i, min(i + 2, len(spisok)))) for i in range(0, len(spisok), 2)]
+    nuzhno = sum(max(mesta[i].nuzhno for i in r) for r in ryady) + ZAZOR_RYADOV * max(0, len(ryady) - 1)
+    niz_kartochek = PODVAL_2 - h_kont - h_info - 0.18
+    if verh + nuzhno > niz_kartochek:
+        return verh + nuzhno - niz_kartochek
+    if spisok:
+        _, niz_y = rasstavit_kartochki(f, spisok, verh, niz_kartochek, izm, kegl)
+        y_info = niz_y + 0.18
+    else:
+        y_info = verh
+    for n in info:
+        postavit(f[n], y=y_info + sdvig_info[n])
+    if kontakty_spisok:
+        y_k = y_info + h_info
+        postavit(f["contacts-heading"], y=y_k)
+        postavit(f["contacts-marker"], y=y_k + 0.10)
+        postavit(f["contacts-table"], y=y_k + 0.44)
+    return 0.0
+
+
+def period_v_plashku(slayd, d):
+    if not d["data_sreza"]:
+        return
+    tb = telo(figury(slayd)["period"]._element)
+    a = copy.deepcopy(tb.find(qn("a:p")))
+    r = a.find(qn("a:r"))
+    r.find(qn("a:t")).text = f"данные на {d['data_sreza']}"
+    r.find(qn("a:rPr")).set("sz", "850")
+    r.find(qn("a:rPr")).set("b", "0")
+    tb.append(a)
 
 
 # ---------------------------------------------------------------- сборка
 
 
-def ubrat_kommentarii(prez):
+def ubrat_sluzhebnoe(prez):
+    """Комментарии, авторы, заметки и сведения о версиях в итоговый файл не идут."""
     for s in prez.slides:
         for rId, rel in list(s.part.rels.items()):
-            if "comments" in rel.reltype:
-                s.part.rels.pop(rId)
+            if "comment" in rel.reltype or rel.reltype.endswith("/notesSlide"):
+                s.part.drop_rel(rId)
     for rId, rel in list(prez.part.rels.items()):
-        if "authors" in rel.reltype or "revisionInfo" in rel.reltype:
-            prez.part.rels.pop(rId)
+        if any(k in rel.reltype for k in ("authors", "revisionInfo", "commentAuthors")):
+            prez.part.drop_rel(rId)
 
 
 def sobrat(d, shablon, spisok_kontaktov, vyhod):
     izm = Izmeritel()
-    # Сначала вид шаблона, затем плотнее отступы, затем меньше шрифт карточек.
-    for kegl, plotno in ((10.5, False), (10.5, True), (10, True), (9.5, True), (9, True)):
+    for kegl in (9.5, 9.0):
         prez = Presentation(str(shablon))
         s1, s2 = prez.slides[0], prez.slides[1]
-        niz = stranitsa_1(s1, d, izm, kegl, plotno)
-        if niz <= NIZ_STRANITSY:
+        nehvatka = max(stranitsa_1(s1, d, izm, kegl), stranitsa_2(s2, d, spisok_kontaktov, izm, kegl))
+        if nehvatka == 0:
             break
     else:
-        lishnee = (niz - NIZ_STRANITSY) / 914400 * 2.54
         sys.exit(
-            f"Текст не помещается на первую страницу даже шрифтом 9 pt: лишние {lishnee:.1f} см. "
-            "Сократите отбором: меньше строк в карточках или меньше карточек (AGENTS.md, п. 6, шаг 8)."
+            f"Текст не помещается на 2 страницы даже шрифтом 9 pt: не хватает {nehvatka * 2.54:.1f} см. "
+            "Сократите отбором: меньше пунктов в карточках или короче ключевые итоги (AGENTS.md, п. 7, шаг 7)."
         )
     for s in (s1, s2):
         zamenit_period(s, d["period"])
     period_v_plashku(s1, d)
-    est_kontakty = stranitsa_2(s2, spisok_kontaktov, izm)
-    ubrat_kommentarii(prez)
+    ubrat_sluzhebnoe(prez)
 
     cp = prez.core_properties
-    cp.title = f"Открытые API: дайджест за {d['period']}"
+    cp.title = f"Дайджест «Открытые API» за {d['period']}"
     cp.author = "Ассоциация ФинТех"
     cp.last_modified_by = ""
     cp.revision = 1
@@ -486,7 +614,7 @@ def sobrat(d, shablon, spisok_kontaktov, vyhod):
 
     vyhod.parent.mkdir(parents=True, exist_ok=True)
     prez.save(str(vyhod))
-    return kegl, plotno, est_kontakty
+    return kegl
 
 
 def main(argv=None):
@@ -523,21 +651,22 @@ def main(argv=None):
     if vyhod.resolve() == chernovik.resolve():
         sys.exit("Итоговый файл совпадает с черновиком")
 
-    kegl, plotno, est_kontakty = sobrat(d, Path(a.shablon), spisok, vyhod)
+    kegl = sobrat(d, Path(a.shablon), spisok, vyhod)
     try:
         pokaz = vyhod.resolve().relative_to(KOREN)
     except ValueError:
         pokaz = vyhod
     print(f"Итоговый файл: {pokaz}")
-    print(f"Ключевых итогов: {len(d['itogi'])}, карточек: {len(d['kartochki'])}.")
-    if plotno:
-        print(
-            "ВНИМАНИЕ: чтобы текст поместился, отступы уплотнены"
-            + (f" и шрифт карточек уменьшен до {kegl} pt" if kegl < 10.5 else "")
-            + ". Лучше сократить отбором."
-        )
-    if not est_kontakty:
-        print("ВНИМАНИЕ: контакты не заполнены (nastroyki/kontakty.md), блок «Контакты» убран со 2-й страницы.")
+    nomera = [k["n"] for k in d["kartochki"]]
+    print(f"Ключевых итогов: {len(d['itogi'])}, карточек: {len(nomera)} ({', '.join(map(str, nomera))}).")
+    net = sorted(set(range(1, 9)) - set(nomera))
+    if net:
+        print(f"ВНИМАНИЕ: нет карточек {', '.join(map(str, net))}; их места убраны. Проверьте вид страниц.")
+    if kegl < 9.5:
+        print(f"ВНИМАНИЕ: чтобы текст поместился, шрифт карточек уменьшен до {kegl} pt. Лучше сократить отбором.")
+    if not spisok:
+        print("ВНИМАНИЕ: контакты не заполнены (workspace/kontakty.md или nastroyki/kontakty.md), "
+              "блок «Как подключиться» убран.")
     print("Откройте файл и проверьте вид перед отправкой.")
     return 0
 

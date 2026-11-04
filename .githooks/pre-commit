@@ -1,0 +1,48 @@
+#!/bin/sh
+# Проверка перед коммитом: рабочие материалы, ключи и личные контакты не попадают в git.
+# Включить: git config core.hooksPath .githooks
+
+flag=$(mktemp)
+trap 'rm -f "$flag"' EXIT
+pochta='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+razresheno='@example\.(org|com)$'
+
+git diff --cached --name-only --diff-filter=ACMR | while IFS= read -r f; do
+  case "$f" in
+    workspace/README.md) ;;
+    workspace/*)
+      echo "Нельзя коммитить рабочие материалы: $f (папка workspace/ только локальная)"; echo 1 > "$flag"; continue ;;
+    .env|*/.env)
+      echo "Нельзя коммитить ключи API: $f"; echo 1 > "$flag"; continue ;;
+  esac
+  case "$f" in
+    *.md)
+      if git show ":$f" 2>/dev/null | grep -Eo "$pochta" | grep -Ev "$razresheno" | grep -q .; then
+        echo "В $f есть адрес почты: настоящие контакты храните в workspace/kontakty.md"; echo 1 > "$flag"
+      fi ;;
+    *.pptx)
+      tmp=$(mktemp)
+      git show ":$f" > "$tmp"
+      if ! python3 - "$tmp" <<'PY'
+import re, sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+t = " ".join(z.read(n).decode("utf-8", "ignore") for n in z.namelist() if n.endswith(".xml"))
+plohie = [m for m in re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", t)
+          if not re.search(r"@example\.(org|com)$", m)]
+avtory = [n for n in z.namelist() if n.endswith(("authors.xml", "commentAuthors.xml")) or "/comments/" in n]
+sys.exit(1 if plohie or avtory else 0)
+PY
+      then
+        echo "В $f есть адреса почты, авторы или комментарии: уберите их (контакты подставляет scripts/sborka.py)"; echo 1 > "$flag"
+      fi
+      rm -f "$tmp" ;;
+  esac
+done
+
+# Если меняли правила, шаблон, проверку или пример — пример должен проходить проверку.
+if git diff --cached --name-only | grep -Eq '^(AGENTS\.md|templates/|scripts/proverka\.py|examples/|nastroyki/spravochnik-terminov\.md)'; then
+  python3 scripts/proverka.py examples >/dev/null || { echo "Пример не проходит проверку: python3 scripts/proverka.py examples"; echo 1 > "$flag"; }
+fi
+
+if [ -s "$flag" ]; then echo "Коммит остановлен."; exit 1; fi
+exit 0
