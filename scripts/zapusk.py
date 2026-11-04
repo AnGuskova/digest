@@ -17,7 +17,8 @@ OpenRouter, YandexGPT, локальных Ollama и LM Studio и других п
         [--adresat внутренний|внешний] [--imya 3кв-2026] файл1.md файл2.txt ...
 
 Входные файлы: текст (.md, .txt, .csv). PDF и DOCX сначала сохраните как текст.
-Результат: workspace/outputs/ГГГГ-ММ-ДД_дайджест_<имя>.md, затем проверка proverka.py.
+Результат: черновик workspace/outputs/ГГГГ-ММ-ДД_дайджест_<имя>_черновик.md,
+проверка proverka.py и итоговый файл .pptx (sborka.py, нужна python-pptx).
 """
 
 import argparse
@@ -132,7 +133,7 @@ def main():
 
     data = datetime.datetime.strptime(a.data_sreza, "%d.%m.%Y").strftime("%Y-%m-%d")
     imya = a.imya or re.sub(r"\s+", "-", a.period.strip())
-    put = KOREN / "workspace" / "outputs" / f"{data}_дайджест_{imya}.md"
+    put = KOREN / "workspace" / "outputs" / f"{data}_дайджест_{imya}_черновик.md"
     put.parent.mkdir(parents=True, exist_ok=True)
     put.write_text(otvet, encoding="utf-8")
     print(f"Сохранено: {put.relative_to(KOREN)}")
@@ -141,7 +142,15 @@ def main():
         [sys.executable, str(KOREN / "scripts" / "proverka.py"), str(put)]
     )
     if rez.returncode:
-        print("Проверка нашла нарушения: исправьте файл вручную или повторите запуск.")
+        print(
+            "Проверка нашла нарушения: исправьте черновик, затем соберите итоговый файл:\n"
+            f"    python3 scripts/sborka.py {put.relative_to(KOREN)}"
+        )
+        return rez.returncode
+
+    rez = subprocess.run(
+        [sys.executable, str(KOREN / "scripts" / "sborka.py"), "--bez-proverki", str(put)]
+    )
     return rez.returncode
 
 
